@@ -1,0 +1,19 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Store (diagnosis reports are output, not source)
+# store/
