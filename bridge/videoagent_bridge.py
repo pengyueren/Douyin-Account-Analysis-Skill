@@ -1,7 +1,7 @@
 """诊断桥接脚本 — 采集抖音/小红书账号数据
 
 自包含实现，不依赖 videoagent 的任何内部代码。
-依赖：MediaCrawler（外部安装）、playwright、yt-dlp、faster-whisper
+依赖：MediaCrawler（外部安装）、yt-dlp、faster-whisper
 
 用法：
   python bridge/videoagent_bridge.py search <platform> <keyword> [--min-likes 500]
@@ -19,10 +19,10 @@ fetch-creator 支持的 URL 格式：
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -32,22 +32,6 @@ if str(_bridge_dir) not in sys.path:
     sys.path.insert(0, str(_bridge_dir))
 
 from mediacrawler_runner import MediaCrawlerRunner
-from playwright_crawler import PlaywrightCrawler
-
-# ── 浏览器配置目录发现（用于 Playwright 爬虫的登录态）──
-
-def _find_douyin_profile() -> str | None:
-    """查找抖音浏览器配置目录（含登录 cookies）
-
-    优先级：环境变量 > videoagent 默认位置
-    """
-    env_path = os.getenv("DOUYIN_PROFILE_DIR")
-    if env_path and Path(env_path).exists():
-        return env_path
-    va_path = Path.home() / "Desktop/videoagent/browser_profiles/dy"
-    if va_path.exists():
-        return str(va_path)
-    return None
 
 # ── URL 解析工具 ─────────────────────────────
 
@@ -94,15 +78,29 @@ def _resolve_douyin_shortlink(url: str) -> str:
 # ── 数据标准化 ─────────────────────────────
 
 
+def _to_date(val) -> str:
+    """将 Unix 时间戳或日期字符串转为 YYYY-MM-DD"""
+    if not val:
+        return ""
+    if isinstance(val, (int, float)) and val > 1000000000:
+        return datetime.fromtimestamp(val).strftime("%Y-%m-%d")
+    s = str(val).strip()
+    if re.match(r"^\d{4}-\d{2}-\d{2}", s):
+        return s
+    return ""
+
+
 def _standardize_videos(raw_list: list[dict]) -> list[dict]:
-    """将 MediaCrawler/Playwright 原始数据转成统一格式"""
+    """将 MediaCrawler 原始数据转成统一格式（按 aweme_id 去重）"""
+    seen: set[str] = set()
     videos = []
     for item in raw_list:
         if not isinstance(item, dict):
             continue
         aweme_id = item.get("aweme_id", "") or ""
-        if not aweme_id:
+        if not aweme_id or aweme_id in seen:
             continue
+        seen.add(aweme_id)
 
         # 兼容 MediaCrawler 和 Playwright Crawler 的字段名
         likes = int(item.get("liked_count", 0) or 0)
@@ -110,7 +108,7 @@ def _standardize_videos(raw_list: list[dict]) -> list[dict]:
         favorites = int(item.get("collected_count", 0) or 0)
         shares = int(item.get("share_count", 0) or 0)
         desc = item.get("desc", "") or item.get("title", "") or ""
-        create_time = item.get("create_time", "") or ""
+        create_time = _to_date(item.get("create_time", "") or "")
         aweme_type = str(item.get("aweme_type", "0") or "0")
 
         videos.append({
@@ -196,9 +194,8 @@ def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
 def cmd_fetch_creator(url: str, platform: str) -> dict:
     """通过创作者主页 URL 获取全部作品数据
 
-    双策略：
-    1. MediaCrawler CLI（优先）— 支持完整分页
-    2. Playwright 爬虫（兜底）— 约 32 条，但确保数据属于正确创作者
+    调用 MediaCrawler CLI 采集完整主页作品列表。
+    优先读缓存，缓存不命中时自动触发 CLI 采集。
     """
     if platform not in ("dy", "douyin"):
         return {"status": "error", "error": f"暂不支持的平台: {platform}"}
@@ -208,55 +205,21 @@ def cmd_fetch_creator(url: str, platform: str) -> dict:
     except ValueError as e:
         return {"status": "error", "error": str(e)}
 
-    # ── 策略 1: MediaCrawler CLI ──
     try:
         runner = MediaCrawlerRunner()
         mc_results = runner.search_creator(platform, creator_id)
     except Exception as e:
-        print(f"[bridge] MediaCrawler CLI 异常: {e}", file=sys.stderr)
-        mc_results = []
+        return {"status": "error", "error": f"MediaCrawler 采集失败: {e}"}
 
-    # 校验数据是否匹配请求的 creator_id
-    mc_valid = False
-    mc_nickname = ""
-    if mc_results and len(mc_results) > 0:
-        mc_sec_uid = str(mc_results[0].get("sec_uid", "") or "")
-        mc_nickname = str(mc_results[0].get("nickname", "") or "")
-        if mc_sec_uid and (mc_sec_uid == creator_id or creator_id in mc_sec_uid or mc_sec_uid in creator_id):
-            mc_valid = True
+    if not mc_results:
+        return {"status": "error", "error": "MediaCrawler 未返回任何作品数据"}
 
-    if mc_valid and mc_results:
-        videos = _standardize_videos(mc_results)
-        profile = mc_results[0].get("_profile", {}) or {}
-        follower_count = profile.get("follower_count", "0") or "0"
-        profile_desc = profile.get("desc", "") or ""
-        return _build_result(videos, mc_nickname, follower_count, profile_desc, creator_id)
-
-    # ── 策略 2: Playwright 爬虫兜底（约 32 条但数据正确）──
-    try:
-        dy_profile = _find_douyin_profile()
-        if dy_profile:
-            print(f"[bridge] Playwright: 使用已有浏览器配置（{dy_profile}）", file=sys.stderr)
-        else:
-            print(f"[bridge] Playwright: 无登录态（配置 DOUYIN_PROFILE_DIR 环境变量可传入）", file=sys.stderr)
-        crawler = PlaywrightCrawler(persistent_profile_dir=dy_profile)
-        cb_result = crawler.fetch_creator_data(creator_id)
-    except Exception as e:
-        print(f"[bridge] Playwright 爬虫异常: {e}", file=sys.stderr)
-        cb_result = {"status": "error", "error": str(e)}
-
-    if cb_result.get("status") == "ok" and cb_result.get("videos"):
-        raw_videos = cb_result["videos"]
-        videos = _standardize_videos(raw_videos)
-        profile = cb_result.get("profile", {})
-        nickname = profile.get("nickname", "") or ""
-        follower_count = profile.get("follower_count", "0") or "0"
-        profile_desc = profile.get("desc", "") or ""
-        return _build_result(videos, nickname, follower_count, profile_desc, creator_id)
-
-    # ── 全部失败 ──
-    error_msg = cb_result.get("error", "") or "MediaCrawler + Playwright 均失败"
-    return {"status": "error", "error": error_msg}
+    videos = _standardize_videos(mc_results)
+    mc_nickname = str(mc_results[0].get("nickname", "") or "")
+    profile = mc_results[0].get("_profile", {}) or {}
+    follower_count = profile.get("follower_count", "0") or "0"
+    profile_desc = profile.get("desc", "") or ""
+    return _build_result(videos, mc_nickname, follower_count, profile_desc, creator_id)
 
 
 def cmd_analyze_video(url: str, platform: str) -> dict:

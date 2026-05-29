@@ -1,9 +1,6 @@
 # diagnosis — 跨平台账号诊断工具
 # 依赖声明（自包含，不依赖 videoagent 项目）
 
-# 数据采集
-playwright>=1.40
-
 # 视频分析
 yt-dlp>=2024.0
 faster-whisper>=1.0
@@ -16,4 +13,3 @@ Pillow>=10.0
 # - ffmpeg / ffprobe（系统级：brew install ffmpeg / apt install ffmpeg）
 # - MediaCrawler（https://github.com/NanmiCoder/MediaCrawler）
 #   git clone 到同级目录，安装依赖后使用
-# - 抖音浏览器登录态（Playwright 模式无需，但 MediaCrawler 需要）

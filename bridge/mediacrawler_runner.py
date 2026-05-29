@@ -114,10 +114,10 @@ class MediaCrawlerRunner:
             "--save_data_option", "jsonl",
         ]
         try:
-            subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=180)
+            subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=600)
         except subprocess.TimeoutExpired:
             # CLI 超时（通常是因为需要扫码登录），不阻塞，尝试读已有缓存
-            print(f"  [MediaCrawlerRunner] CLI 超时(180s)，尝试读已有缓存", file=sys.stderr)
+            print(f"  [MediaCrawlerRunner] CLI 超时(600s)，尝试读已有缓存", file=sys.stderr)
         except Exception as e:
             print(f"  [MediaCrawlerRunner] CLI 异常: {e}", file=sys.stderr)
 
