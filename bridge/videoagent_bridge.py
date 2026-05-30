@@ -32,6 +32,12 @@ if str(_bridge_dir) not in sys.path:
 
 from mediacrawler_runner import MediaCrawlerRunner
 
+# 持久化存储
+_bridge_store_dir = _bridge_dir.parent / "store"
+if str(_bridge_store_dir) not in sys.path:
+    sys.path.insert(0, str(_bridge_store_dir))
+from store.storage import AccountStorage
+
 # ── URL 解析工具 ─────────────────────────────
 
 DOUYIN_PROFILE_PREFIX = "https://www.douyin.com/user/"
@@ -187,6 +193,7 @@ def cmd_fetch_creator(url: str, platform: str) -> dict:
 
     调用 MediaCrawler CLI 采集完整主页作品列表。
     优先读缓存，缓存不命中时自动触发 CLI 采集。
+    自动将数据持久化到 store/accounts/{nickname}/
     """
     if platform not in ("dy", "douyin"):
         return {"status": "error", "error": f"暂不支持的平台: {platform}"}
@@ -210,29 +217,80 @@ def cmd_fetch_creator(url: str, platform: str) -> dict:
     profile = mc_results[0].get("_profile", {}) or {}
     follower_count = profile.get("follower_count", "0") or "0"
     profile_desc = profile.get("desc", "") or ""
-    return _build_result(videos, mc_nickname, follower_count, profile_desc, creator_id)
+
+    result = _build_result(videos, mc_nickname, follower_count, profile_desc, creator_id)
+
+    # 持久化存储
+    if mc_nickname:
+        try:
+            storage = AccountStorage(mc_nickname)
+            storage.save_raw_data({
+                "creator_id": creator_id,
+                "nickname": mc_nickname,
+                "follower_count": follower_count,
+                "desc": profile_desc,
+                "mc_results_count": len(mc_results),
+                "videos_deduped": len(videos),
+            })
+            storage.save_videos(videos)
+            result["_stored_at"] = str(storage.root)
+        except Exception as e:
+            result["_storage_error"] = str(e)
+
+    return result
 
 
-def cmd_analyze_video(url: str, platform: str) -> dict:
-    """深度分析单个视频（下载 -> 转写 -> 多模态分析）"""
+def cmd_analyze_video(url: str, platform: str, account_name: str = "") -> dict:
+    """深度分析单个视频（下载 -> 转写 -> 多模态分析）
+
+    如果指定 account_name，自动将结果持久化到 store/accounts/{account_name}/analysis/
+    """
     try:
         from bridge.video_analyzer import VideoAnalyzer
 
         analyzer = VideoAnalyzer()
         result = analyzer.analyze(url=url, note_id="bridge_" + url.split("/")[-1][:20], platform=platform)
-        return result.model_dump()
+        data = result.model_dump()
+
+        # 持久化存储
+        if account_name:
+            try:
+                storage = AccountStorage(account_name)
+                video_id = url.split("/")[-1][:30]
+                if data.get("transcript"):
+                    storage.save_transcript(video_id, data["transcript"])
+                storage.save_video_analysis(video_id, data)
+                data["_stored_at"] = str(storage.root / "analysis")
+            except Exception as e:
+                data["_storage_error"] = str(e)
+
+        return data
     except Exception as e:
         return {"error": str(e)}
 
 
-def cmd_extract_audio(url: str, platform: str) -> dict:
+def cmd_extract_audio(url: str, platform: str, account_name: str = "") -> dict:
     """轻量音频提取+转写（下载视频→ffmpeg提音频→whisper转写，不做多模态分析）
 
+    如果指定 account_name，自动将转写结果持久化到 store/accounts/{account_name}/analysis/
+
     用法:
-        python3 bridge/videoagent_bridge.py extract-audio <url> <platform>
+        python3 bridge/videoagent_bridge.py extract-audio <url> <platform> [account_name]
     """
     from video_analyzer import VideoDownloader, AudioVisualProcessor, SpeechTranscriber
     from pathlib import Path
+
+    def _persist(result: dict) -> dict:
+        if account_name and result.get("status") == "ok" and result.get("transcript"):
+            try:
+                storage = AccountStorage(account_name)
+                video_id = url.split("/")[-1][:30]
+                storage.save_transcript(video_id, result["transcript"])
+                storage.save_video_analysis(video_id, result)
+                result["_stored_at"] = str(storage.root / "analysis")
+            except Exception as e:
+                result["_storage_error"] = str(e)
+        return result
 
     work_dir = "output/audio_extract"
     Path(work_dir).mkdir(parents=True, exist_ok=True)
@@ -258,10 +316,9 @@ def cmd_extract_audio(url: str, platform: str) -> dict:
         try:
             transcriber = SpeechTranscriber(model="small")
             transcript = transcriber.transcribe(audio_file)
-            duration = 0
-            return {"url": url, "platform": platform, "duration_seconds": duration, "transcript": transcript, "status": "ok"}
+            return _persist({"url": url, "platform": platform, "duration_seconds": 0, "transcript": transcript, "status": "ok"})
         except Exception as e:
-            return {"url": url, "status": "error", "error": f"转写失败: {e}"}
+            return _persist({"url": url, "status": "error", "error": f"转写失败: {e}"})
         finally:
             try:
                 if audio_file and audio_file.exists():
@@ -286,9 +343,9 @@ def cmd_extract_audio(url: str, platform: str) -> dict:
         transcript = ""
         if audio_path and audio_path.exists() and audio_path.stat().st_size > 1000:
             transcript = transcriber.transcribe(audio_path)
-        return {"url": url, "platform": platform, "duration_seconds": duration, "transcript": transcript, "status": "ok"}
+        return _persist({"url": url, "platform": platform, "duration_seconds": duration, "transcript": transcript, "status": "ok"})
     except Exception as e:
-        return {"url": url, "status": "error", "error": str(e)}
+        return _persist({"url": url, "status": "error", "error": str(e)})
     finally:
         if video_path:
             downloader.cleanup(video_path)

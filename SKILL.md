@@ -10,13 +10,20 @@
 ```
 Step 0: 平台识别 → 确定抖音/小红书，选用对应基准
 Step 1: 数据采集 → fetch-creator 获取创作者完整数据
+        └→ 自动持久化：store/accounts/{昵称}/raw_data/{creator,videos}_{date}.json
 Step 2: 赛道定位 → 判断赛道+目标人群+人设+垂直度
-Step 3: 流量水位 → 互动率 vs 赛道基准 → 高/中/低水位
+Step 3: 流量水位 → 代理指标(藏赞比/转赞比/赞评比) vs 赛道基准 → 高/中/低水位
 Step 4: 内容质量 → 钩子/结构/拍摄/制作/风格
+        └→ 自动持久化：store/accounts/{昵称}/analysis/{transcripts,video_analysis}/
 Step 5: 运营细节 → 发布/标题/标签/评论区/互动引导
 Step 6: 商业化分析 → 变现路径/商单/品牌/阶段
 Step 7: 综合报告 → 问题定位+优先级排序+改进建议
+        └→ 输出 HTML（非 Markdown），存至 store/accounts/{昵称}/reports/diagnosis_{date}.html
 ```
+
+> **数据持久化规则**：每个账号分析的全链路数据（原始抓取 → 视频分析 → 最终报告）自动保存到 `store/accounts/{账号名}/`。详见 `store/storage.py`。
+>
+> **输出格式**：最终诊断报告统一输出为 HTML（图文并茂、结构清晰），不使用 Markdown。
 
 ---
 
