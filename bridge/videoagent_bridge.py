@@ -125,11 +125,57 @@ def _standardize_videos(raw_list: list[dict]) -> list[dict]:
     return videos
 
 
+def _assess_data_sufficiency(videos: list[dict]) -> dict:
+    """评估抓取数据的覆盖充分性
+
+    从视频列表的时间跨度判断是否可能遗漏了早期内容。
+    返回: { video_count, date_range, time_span_days, gap_count, flag }
+    """
+    if not videos:
+        return {"flag": "empty", "video_count": 0, "date_range": "", "time_span_days": 0, "gap_count": 0}
+
+    dates = sorted(
+        v["create_time"] for v in videos
+        if v.get("create_time") and len(str(v.get("create_time", ""))) >= 10
+    )
+    if len(dates) < 2:
+        return {"flag": "insufficient_date_info", "video_count": len(videos)}
+
+    earliest = dates[0]
+    latest = dates[-1]
+    span = (datetime.strptime(latest, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days
+    span = max(span, 1)
+
+    months_in_range = (span // 30) + 1
+    months_with_videos = len(set(d[:7] for d in dates))
+    gap_count = months_in_range - months_with_videos
+    avg_per_month = round(len(videos) / months_in_range, 1)
+
+    # 判定旗标
+    if span < 30 and len(videos) < 30:
+        flag = "partial_very_short_span"
+    elif gap_count > months_in_range * 0.5:
+        flag = "partial_large_gaps"
+    elif months_in_range > 12 and avg_per_month < 3:
+        flag = "partial_low_density"
+    else:
+        flag = "ok"
+
+    return {
+        "flag": flag,
+        "video_count": len(videos),
+        "date_range": f"{earliest} ~ {latest}",
+        "time_span_days": span,
+        "avg_per_month": avg_per_month,
+        "gap_count": gap_count,
+    }
+
+
 def _build_result(
     videos: list[dict], nickname: str,
     follower_count: str, profile_desc: str, uid: str,
 ) -> dict:
-    """构造统一格式的输出"""
+    """构造统一格式的输出，含数据充分性评估"""
     return {
         "status": "ok",
         "creator": {
@@ -140,6 +186,7 @@ def _build_result(
         },
         "videos": videos,
         "total_clean": len(videos),
+        "data_sufficiency": _assess_data_sufficiency(videos),
     }
 
 
@@ -231,6 +278,7 @@ def cmd_fetch_creator(url: str, platform: str) -> dict:
                 "desc": profile_desc,
                 "mc_results_count": len(mc_results),
                 "videos_deduped": len(videos),
+                "data_sufficiency": result.get("data_sufficiency", {}),
             })
             storage.save_videos(videos)
             result["_stored_at"] = str(storage.root)
