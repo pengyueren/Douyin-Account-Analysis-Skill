@@ -368,7 +368,7 @@ class VideoAnalyzer:
         author: str = "",
         likes: int = 0,
     ) -> VideoAnalysisResult:
-        plat_map = {"dy": "douyin", "xhs": "xiaohongshu"}
+        plat_map = {"dy": "douyin"}
         plat = plat_map.get(platform, platform)
 
         video_path = None

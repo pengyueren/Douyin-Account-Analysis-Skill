@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-_PLATFORM_DIR: dict[str, str] = {"dy": "douyin", "xhs": "xhs"}
+_PLATFORM_DIR: dict[str, str] = {"dy": "douyin"}
 
 
 def _parse_count(val: str | int | None) -> int:
@@ -68,13 +68,13 @@ class MediaCrawlerRunner:
         匹配时跳过 CLI 直接读缓存，避免不必要的新鲜抓取。
 
         Args:
-            platform: "dy" 或 "xhs"
-            creator_id: 抖音 sec_uid 或小红书 user_id
+            platform: "dy"
+            creator_id: 抖音 sec_uid
 
         Returns:
             [{aweme_id, desc, liked_count, comment_count, collected_count, share_count, ...}]
         """
-        plat_flag = {"dy": "dy", "douyin": "dy", "xhs": "xhs", "xiaohongshu": "xhs"}.get(platform, platform)
+        plat_flag = {"dy": "dy", "douyin": "dy"}.get(platform, platform)
         plat_dir_name = _PLATFORM_DIR.get(plat_flag, plat_flag)
 
         data_dir = Path(self.repo_path) / "data" / plat_dir_name / "jsonl"
@@ -192,14 +192,14 @@ class MediaCrawlerRunner:
         """关键词搜索
 
         Args:
-            platform: "dy" 或 "xhs"
+            platform: "dy"
             keyword: 搜索关键词
             limit: 最大返回条数
 
         Returns:
             搜索结果列表
         """
-        plat_flag = {"dy": "dy", "douyin": "dy", "xhs": "xhs", "xiaohongshu": "xhs"}.get(platform, platform)
+        plat_flag = {"dy": "dy", "douyin": "dy"}.get(platform, platform)
         plat_dir_name = _PLATFORM_DIR.get(plat_flag, plat_flag)
 
         cmd = [

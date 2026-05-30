@@ -1,4 +1,4 @@
-"""诊断桥接脚本 — 采集抖音/小红书账号数据
+"""诊断桥接脚本 — 采集抖音账号数据
 
 自包含实现，不依赖 videoagent 的任何内部代码。
 依赖：MediaCrawler（外部安装）、yt-dlp、faster-whisper
@@ -13,7 +13,6 @@
 
 fetch-creator 支持的 URL 格式：
   抖音:  https://www.douyin.com/user/{sec_uid}
-  小红书: https://www.xiaohongshu.com/user/profile/{user_id}
 """
 
 from __future__ import annotations
@@ -46,10 +45,6 @@ def _extract_creator_id(url: str, platform: str) -> str:
             return url.split(DOUYIN_PROFILE_PREFIX)[1].split("/")[0]
         if "v.douyin.com" in url:
             return _resolve_douyin_shortlink(url)
-    elif platform in ("xhs", "xiaohongshu"):
-        prefix = "https://www.xiaohongshu.com/user/profile/"
-        if prefix in url:
-            return url.split(prefix)[1].split("/")[0].split("?")[0]
     raise ValueError(f"无法从 URL 解析创作者 ID: {url}")
 
 
@@ -168,10 +163,6 @@ def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
             aweme_type = item.get("aweme_type", 0)
             is_video = aweme_type != 2
             item_url = f"https://www.douyin.com/video/{item_id}"
-        else:
-            item_type = item.get("type", "video")
-            is_video = item_type == "video"
-            item_url = item.get("note_url", "") or f"https://www.xiaohongshu.com/explore/{item_id}"
 
         results.append({
             "id": item_id,
@@ -234,6 +225,80 @@ def cmd_analyze_video(url: str, platform: str) -> dict:
         return {"error": str(e)}
 
 
+def cmd_extract_audio(url: str, platform: str) -> dict:
+    """轻量音频提取+转写（下载视频→ffmpeg提音频→whisper转写，不做多模态分析）
+
+    用法:
+        python3 bridge/videoagent_bridge.py extract-audio <url> <platform>
+    """
+    from video_analyzer import VideoDownloader, AudioVisualProcessor, SpeechTranscriber
+    from pathlib import Path
+
+    work_dir = "output/audio_extract"
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
+    work_dir_path = Path(work_dir)
+    note_id = "audio_" + url.split("/")[-1][:20]
+
+    plat_map = {"dy": "douyin"}
+    plat = plat_map.get(platform, platform)
+
+    # 先尝试 yt-dlp 直接下载音频
+    audio_file = work_dir_path / f"{note_id}.mp3"
+    try:
+        subprocess.run([
+            "yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "mp3",
+            "-o", str(audio_file), "--max-filesize", "100M",
+            "--cookies-from-browser", "chrome",
+            "--no-playlist", "--no-warnings", "--force-ipv4", url,
+        ], capture_output=True, text=True, timeout=120)
+    except Exception:
+        audio_file = None
+
+    if audio_file and audio_file.exists() and audio_file.stat().st_size > 1000:
+        try:
+            transcriber = SpeechTranscriber(model="small")
+            transcript = transcriber.transcribe(audio_file)
+            duration = 0
+            return {"url": url, "platform": platform, "duration_seconds": duration, "transcript": transcript, "status": "ok"}
+        except Exception as e:
+            return {"url": url, "status": "error", "error": f"转写失败: {e}"}
+        finally:
+            try:
+                if audio_file and audio_file.exists():
+                    audio_file.unlink()
+            except OSError:
+                pass
+
+    # 降级：下载完整视频 → ffmpeg 提音频 → whisper 转写
+    downloader = VideoDownloader(work_dir=work_dir, timeout=120, max_seconds=600)
+    av = AudioVisualProcessor(work_dir=work_dir)
+    transcriber = SpeechTranscriber(model="small")
+    video_path = None
+    audio_path = None
+    try:
+        video_path = downloader.download(url, note_id, platform=plat)
+        audio_path = work_dir_path / f"{note_id}_audio.wav"
+        subprocess.run([
+            "ffmpeg", "-y", "-i", str(video_path),
+            "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(audio_path),
+        ], capture_output=True, timeout=300)
+        duration = int(av.get_duration(video_path))
+        transcript = ""
+        if audio_path and audio_path.exists() and audio_path.stat().st_size > 1000:
+            transcript = transcriber.transcribe(audio_path)
+        return {"url": url, "platform": platform, "duration_seconds": duration, "transcript": transcript, "status": "ok"}
+    except Exception as e:
+        return {"url": url, "status": "error", "error": str(e)}
+    finally:
+        if video_path:
+            downloader.cleanup(video_path)
+        if audio_path and audio_path.exists():
+            try:
+                audio_path.unlink()
+            except OSError:
+                pass
+
+
 def cmd_analyze_article(url: str, platform: str) -> dict:
     """分析图文内容（目前返回该平台的搜索结果）"""
     try:
@@ -256,6 +321,7 @@ def main():
         print(f"  {sys.argv[0]} fetch-creator <url> <platform>", file=sys.stderr)
         print(f"  {sys.argv[0]} analyze-video <url> <platform>", file=sys.stderr)
         print(f"  {sys.argv[0]} analyze-article <url> <platform>", file=sys.stderr)
+        print(f"  {sys.argv[0]} extract-audio <url> <platform>", file=sys.stderr)
         sys.exit(1)
 
     command = sys.argv[1]
@@ -287,6 +353,12 @@ def main():
         url = sys.argv[2]
         platform = sys.argv[3]
         result = cmd_analyze_article(url, platform)
+        print(json.dumps(result, ensure_ascii=False))
+
+    elif command == "extract-audio":
+        url = sys.argv[2]
+        platform = sys.argv[3]
+        result = cmd_extract_audio(url, platform)
         print(json.dumps(result, ensure_ascii=False))
 
     else:
