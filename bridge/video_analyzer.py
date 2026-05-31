@@ -9,12 +9,8 @@ from __future__ import annotations
 import base64
 import json
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
-import uuid
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -379,7 +375,7 @@ class VideoAnalyzer:
         try:
             video_path = self.downloader.download(url, note_id, platform=plat)
         except VideoDownloadError as e:
-            print(f"  [下载失败] {e}")
+            print(f"  [下载失败] {e}", file=sys.stderr)
             return VideoAnalysisResult(url=url, note_id=note_id, platform=plat, summary=f"下载失败: {e}")
 
         # Step 2: 提取音频+关键帧
@@ -395,7 +391,7 @@ class VideoAnalyzer:
                 try:
                     transcript = self.transcriber.transcribe(audio_path)
                 except TranscriptionError as e:
-                    print(f"  [转写失败] {e}")
+                    print(f"  [转写失败] {e}", file=sys.stderr)
 
         # Step 3: 多模态分析
         analysis_data: dict[str, Any] = {
@@ -415,7 +411,7 @@ class VideoAnalyzer:
                 )
                 analysis_data.update(result)
             except AnalysisError as e:
-                print(f"  [多模态分析失败] {e}")
+                print(f"  [多模态分析失败] {e}", file=sys.stderr)
                 if transcript:
                     analysis_data["summary"] = "语音转录完成，视觉分析不可用"
         else:

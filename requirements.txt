@@ -6,6 +6,12 @@ yt-dlp>=2024.0
 faster-whisper>=1.0
 openai>=1.0
 
+# .env 加载
+python-dotenv>=1.0
+
+# 语音转写（CUDA 检测）
+torch>=2.0
+
 # 图片处理（视频分析帧处理用）
 Pillow>=10.0
 

@@ -35,15 +35,16 @@ git clone <repo-url> diagnosis
 cd diagnosis
 
 # 2. 安装 Python 依赖
-pip install faster-whisper openai
+pip install -r requirements.txt
 
 # 3. 安装外部工具
 brew install yt-dlp ffmpeg     # macOS
 # apt install yt-dlp ffmpeg    # Linux
 
-# 4. 安装 MediaCrawler（独立项目）
-git clone https://github.com/NanmiCoder/MediaCrawler
+# 4. 安装 MediaCrawler（独立项目，克隆到 diagnosis 同级的目录）
+cd .. && git clone https://github.com/NanmiCoder/MediaCrawler
 cd MediaCrawler && pip install -r requirements.txt
+cd ../diagnosis
 # 首次运行 python main.py --platform dy --lt qrcode 扫码登录
 
 # 5. 配置环境变量
@@ -65,7 +66,7 @@ cp .env.example .env
 
 | 环境变量 | 必需 | 说明 |
 |---------|------|------|
-| `MEDIACRAWLER_PATH` | 是 | MediaCrawler 项目目录的绝对路径 |
+| `MEDIACRAWLER_PATH` | 否 | MediaCrawler 项目目录的绝对路径（按默认路径安装到同级目录则不需要） |
 | `LLM_API_KEY` | 否 | 多模态视频分析的 API key（不配则不做画面分析） |
 | `LLM_BASE_URL` | 否 | API 地址，默认 `https://ark.cn-beijing.volces.com/api/v3` |
 | `LLM_MODEL` | 否 | 模型名称（Seed 2.0 的接入点名称） |

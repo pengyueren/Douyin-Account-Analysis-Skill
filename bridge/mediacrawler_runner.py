@@ -114,7 +114,11 @@ class MediaCrawlerRunner:
             "--save_data_option", "jsonl",
         ]
         try:
-            subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                print(f"  [MediaCrawlerRunner] CLI 返回错误码 {result.returncode}: {result.stderr.strip()[:200]}", file=sys.stderr)
+                # CLI 失败时不再读旧缓存，返回空结果
+                return []
         except subprocess.TimeoutExpired:
             # CLI 超时（通常是因为需要扫码登录），不阻塞，尝试读已有缓存
             print(f"  [MediaCrawlerRunner] CLI 超时(600s)，尝试读已有缓存", file=sys.stderr)
@@ -211,7 +215,10 @@ class MediaCrawlerRunner:
             "--max_comments_count_singlenotes", "0",
             "--save_data_option", "jsonl",
         ]
-        subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            print(f"  [MediaCrawlerRunner] search CLI 返回错误码 {result.returncode}: {result.stderr.strip()[:200]}", file=sys.stderr)
+            return []
 
         data_dir = Path(self.repo_path) / "data" / plat_dir_name / "jsonl"
         files = sorted(data_dir.glob("search_contents_*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)

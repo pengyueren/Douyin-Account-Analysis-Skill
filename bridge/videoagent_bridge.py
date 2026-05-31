@@ -45,9 +45,9 @@ if str(_bridge_dir) not in sys.path:
 from mediacrawler_runner import MediaCrawlerRunner
 
 # 持久化存储
-_bridge_store_dir = _bridge_dir.parent / "store"
-if str(_bridge_store_dir) not in sys.path:
-    sys.path.insert(0, str(_bridge_store_dir))
+_project_root = _bridge_dir.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 from store.storage import AccountStorage
 
 # ── URL 解析工具 ─────────────────────────────
@@ -445,16 +445,29 @@ def cmd_analyze_article(url: str, platform: str) -> dict:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("用法:", file=sys.stderr)
-        print(f"  {sys.argv[0]} search <platform> <keyword> [--min-likes N]", file=sys.stderr)
-        print(f"  {sys.argv[0]} fetch-creator <url> <platform>", file=sys.stderr)
-        print(f"  {sys.argv[0]} analyze-video <url> <platform>", file=sys.stderr)
-        print(f"  {sys.argv[0]} analyze-article <url> <platform>", file=sys.stderr)
-        print(f"  {sys.argv[0]} extract-audio <url> <platform>", file=sys.stderr)
+    # per-command argument specification
+    _cmd_defs = {
+        "search": ["<platform>", "<keyword>", "[--min-likes N]"],
+        "fetch-creator": ["<url>", "<platform>"],
+        "analyze-video": ["<url>", "<platform>", "[account_name]"],
+        "analyze-article": ["<url>", "<platform>"],
+        "extract-audio": ["<url>", "<platform>", "[account_name]"],
+    }
+
+    if len(sys.argv) < 2 or sys.argv[1] not in _cmd_defs:
+        usage = {name: " ".join(args) for name, args in _cmd_defs.items()}
+        print(json.dumps({"error": "未知命令或参数不足", "usage": usage}, ensure_ascii=False))
         sys.exit(1)
 
     command = sys.argv[1]
+    expected = _cmd_defs[command]
+    min_args = sum(1 for a in expected if not a.startswith("[")) + 1  # +1 for command itself
+    if len(sys.argv) < min_args + 1:  # +1 for sys.argv[0]
+        print(json.dumps(
+            {"error": f"参数不足. 用法: {sys.argv[0]} {command} {' '.join(expected)}"},
+            ensure_ascii=False,
+        ))
+        sys.exit(1)
 
     if command == "search":
         platform = sys.argv[2]

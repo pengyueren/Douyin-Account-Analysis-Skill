@@ -15,6 +15,9 @@ venv/
 # Claude
 .claude/
 
+# Download / output artifacts
+output/
+
 # Store data (diagnosis reports, runtime data — keep locally)
 store/accounts/
 store/*.md
