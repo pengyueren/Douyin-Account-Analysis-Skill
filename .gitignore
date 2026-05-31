@@ -17,3 +17,6 @@ venv/
 
 # Store (diagnosis reports are output, not source)
 # store/
+
+# Environment (user secrets)
+.env

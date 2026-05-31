@@ -6,8 +6,8 @@
 用法：
   python bridge/videoagent_bridge.py search <platform> <keyword> [--min-likes 500]
   python bridge/videoagent_bridge.py fetch-creator <url> <platform>
-  python bridge/videoagent_bridge.py analyze-video <url> <platform>
-  python bridge/videoagent_bridge.py analyze-article <url> <platform>
+  python bridge/videoagent_bridge.py analyze-video <url> <platform> [account_name]
+  python bridge/videoagent_bridge.py extract-audio <url> <platform> [account_name]
 
 输出：JSON 到 stdout
 
@@ -18,12 +18,24 @@ fetch-creator 支持的 URL 格式：
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+# ── 加载 .env（非必需，无 .env 或 python-dotenv 时静默降级）──
+_env_loaded = False
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(str(_env_path))
+        _env_loaded = True
+except ImportError:
+    pass
 
 # 确保 bridge 目录在路径中
 _bridge_dir = Path(__file__).parent
@@ -292,11 +304,24 @@ def cmd_analyze_video(url: str, platform: str, account_name: str = "") -> dict:
     """深度分析单个视频（下载 -> 转写 -> 多模态分析）
 
     如果指定 account_name，自动将结果持久化到 store/accounts/{account_name}/analysis/
+
+    多模态分析从环境变量读取 LLM 配置（LLM_API_KEY, LLM_BASE_URL, LLM_MODEL）。
+    不配置时仅做音频转写，不做画面分析。
     """
     try:
         from bridge.video_analyzer import VideoAnalyzer
 
-        analyzer = VideoAnalyzer()
+        # 从环境变量读取 LLM 配置（如果设置了 LLM_API_KEY）
+        llm_key = os.getenv("LLM_API_KEY", "")
+        analyzer_cfg = {}
+        if llm_key:
+            analyzer_cfg = {
+                "seed2_api_key": llm_key,
+                "seed2_base_url": os.getenv("LLM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
+                "seed2_model": os.getenv("LLM_MODEL", ""),
+            }
+
+        analyzer = VideoAnalyzer(analyzer_cfg) if analyzer_cfg else VideoAnalyzer()
         result = analyzer.analyze(url=url, note_id="bridge_" + url.split("/")[-1][:20], platform=platform)
         data = result.model_dump()
 
@@ -451,7 +476,8 @@ def main():
     elif command == "analyze-video":
         url = sys.argv[2]
         platform = sys.argv[3]
-        result = cmd_analyze_video(url, platform)
+        account_name = sys.argv[4] if len(sys.argv) > 4 else ""
+        result = cmd_analyze_video(url, platform, account_name)
         print(json.dumps(result, ensure_ascii=False))
 
     elif command == "analyze-article":
@@ -463,7 +489,8 @@ def main():
     elif command == "extract-audio":
         url = sys.argv[2]
         platform = sys.argv[3]
-        result = cmd_extract_audio(url, platform)
+        account_name = sys.argv[4] if len(sys.argv) > 4 else ""
+        result = cmd_extract_audio(url, platform, account_name)
         print(json.dumps(result, ensure_ascii=False))
 
     else:
