@@ -22,6 +22,7 @@ Step 6: 商业化分析 → 变现路径/商单/品牌/阶段
 Step 7: 综合报告 → 问题定位+优先级排序+改进建议
         ├→ 报告中标注 data_sufficiency 判定结果（如果 flag!=ok，说明数据可能不全）
         └→ 输出 HTML（非 Markdown），存至 store/accounts/{昵称}/reports/diagnosis_{date}.html
+        └→ 报告结构参考 references/report_template.md（9 段基线结构，可根据实际账号情况扩展不可简化）
 ```
 
 > **数据持久化规则**：每个账号分析的全链路数据（原始抓取 → 视频分析 → 最终报告）自动保存到 `store/accounts/{账号名}/`。详见 `store/storage.py`。
