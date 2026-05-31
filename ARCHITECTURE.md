@@ -52,7 +52,6 @@ diagnosis/
 │   ├── videoagent_bridge.py        # CLI 入口 (main)
 │   ├── mediacrawler_runner.py      # MediaCrawler 调用器
 │   ├── video_analyzer.py           # 视频分析 (下载→转写→多模态)
-│   └── batch_audio_extract.py      # 批量音频提取工具
 │
 ├── references/                     # 诊断知识库
 │   ├── account-analysis-framework.md  # 6 维度分析框架
@@ -60,6 +59,7 @@ diagnosis/
 │   └── operation_manual.md            # 可落地改进操作手册
 │
 ├── distillation/                   # 知识蒸馏 (研究过程，非运行时依赖)
+│   ├── batch_audio_extract.py      # 批量音频提取（研究脚本，非核心 CLI）
 │   ├── cross_validation_report.md  # 114 条视频交叉验证报告
 │   ├── search_terms.md             # 搜索词策略
 │   ├── synthesized/                # 蒸馏合成输出

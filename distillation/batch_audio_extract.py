@@ -1,14 +1,18 @@
-"""批量音频提取+转写 — 从 batch_extract.json 读取视频列表，逐个处理
+"""批量音频提取+转写 — 研究复现脚本，非核心 CLI
+
+从 batch_extract.json 读取视频列表，逐个下载 → 提取音频 → 转写。
 
 用法:
-    python3 bridge/batch_audio_extract.py [--max N] [--resume]
+    python3 distillation/batch_audio_extract.py [--max N]
 
-每个视频流程:
-  1. 从 aweme/v1/play/ 获取 CDN 302 跳转
-  2. 下载视频（streaming, ~30-50MB）
-  3. ffmpeg 提取音频 → WAV
-  4. faster-whisper small 转写
-  5. 清理临时文件，保存结果
+依赖（需额外安装）:
+    pip install requests browser-cookie3
+
+输入: distillation/raw_data/douyin/batch_extract.json
+输出: distillation/raw_data/douyin/transcripts/
+
+注意: 此脚本是知识蒸馏阶段的研究工具，不属于核心 CLI 命令。
+      核心 CLI 请使用 bridge/videoagent_bridge.py extract-audio。
 """
 
 import json
