@@ -15,8 +15,11 @@ venv/
 # Claude
 .claude/
 
-# Store (diagnosis reports are output, not source)
-# store/
+# Store data (diagnosis reports, runtime data — keep locally)
+store/accounts/
+store/*.md
+store/*.html
+distillation/raw_data/douyin/
 
 # Environment (user secrets)
 .env
