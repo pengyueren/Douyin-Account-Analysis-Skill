@@ -145,11 +145,17 @@ python3 bridge/videoagent_bridge.py analyze-video "https://www.douyin.com/video/
 
 需配置 `LLM_API_KEY`。输出含钩子类型、内容风格、CTA 类型等结构化分析。
 
-### 4. 关键词搜索
+### 4. 关键词搜索（素材调研）
+
+在抖音搜索某个话题下的热门视频，用于找对标、研究选题：
 
 ```bash
 python3 bridge/videoagent_bridge.py search dy "混合喂养" --min-likes 2000
+python3 bridge/videoagent_bridge.py search dy "坐月子" --min-likes 5000
+python3 bridge/videoagent_bridge.py search dy "产后恢复" --min-likes 1000
 ```
+
+**注意**：这是"搜内容"（找话题下的热门视频），区别于 `fetch-creator` 的"搜账号"（抓取某个创作者的全部视频）。`--min-likes` 过滤低赞内容。搜索结果仅包含标题、互动数等字段，不会下载视频或做内容分析。
 
 ---
 
