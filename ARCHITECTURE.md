@@ -128,8 +128,8 @@ analyzer = VideoAnalyzer({
 | 配置状态 | 行为 |
 |---------|------|
 | 配了 seed2_api_key + seed2_model | 完整多模态分析 (画面+文案) |
-| 未配，但有 faster-whisper | 仅文案转写，无视觉分析 |
-| 两者都无 | 仅基于 API 返回文本分析 |
+| 未配 seed2，但有 faster-whisper | 仅文案转写，无视觉分析 |
+| 两者都无 | 仅视频下载+帧提取，无分析 |
 
 **扩展至其他 LLM**：`ContentAnalyzer` 当前用 OpenAI SDK 的 Responses API，不适合直接替换为其他提供者。如需支持 GPT-4o、Claude、Gemini 等，需在 `ContentAnalyzer` 层做抽象：
 

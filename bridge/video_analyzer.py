@@ -126,7 +126,8 @@ class AudioVisualProcessor:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             info = json.loads(result.stdout)
             return float(info.get("format", {}).get("duration", 0))
-        except Exception:
+        except Exception as e:
+            print(f"  [AudioVisualProcessor] 获取视频时长失败: {e}", file=sys.stderr)
             return 0.0
 
     def extract_audio(self, video_path: Path, note_id: str) -> Path | None:
@@ -142,8 +143,8 @@ class AudioVisualProcessor:
             subprocess.run(cmd, capture_output=True, timeout=60)
             if output.exists() and output.stat().st_size > 1000:
                 return output
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"  [AudioVisualProcessor] 提取音频失败: {e}", file=sys.stderr)
         return None
 
     def extract_frames(self, video_path: Path, note_id: str) -> list[Path]:
@@ -165,7 +166,8 @@ class AudioVisualProcessor:
                 subprocess.run(cmd, capture_output=True, timeout=30)
                 if output.exists() and output.stat().st_size > 1000:
                     frames.append(output)
-            except Exception:
+            except Exception as e:
+                print(f"  [AudioVisualProcessor] 提取帧失败(ts={ts}): {e}", file=sys.stderr)
                 continue
         return frames
 
@@ -255,8 +257,6 @@ class ContentAnalyzer:
         author: str = "",
         likes: int = 0,
     ) -> dict[str, Any]:
-        from openai import OpenAI
-
         system_prompt = """你是一位专业的短视频内容分析师。分析视频的帧画面（视觉）和口播文案（听觉）。
 
 ## 输出格式
@@ -295,7 +295,8 @@ class ContentAnalyzer:
         try:
             response = self.client.responses.create(
                 model=self.model,
-                input=[{"role": "user", "content": [{"type": "input_text", "text": system_prompt}, *user_content]}],
+                instructions=system_prompt,
+                input=[{"role": "user", "content": user_content}],
                 temperature=0.3,
                 max_output_tokens=4096,
             )
@@ -318,7 +319,7 @@ class ContentAnalyzer:
 
 
 DEFAULT_CONFIG = {
-    "work_dir": "output/videos_analysis",
+    "work_dir": str(Path(__file__).resolve().parent.parent / "output" / "videos_analysis"),
     "download_timeout": 30,
     "max_download_seconds": 90,
     "frame_interval": 10,
@@ -429,20 +430,5 @@ class VideoAnalyzer:
         return VideoAnalysisResult(
             url=url, note_id=note_id, platform=plat,
             duration_seconds=duration, transcript=transcript,
-            hook_text=analysis_data.get("hook_text", ""),
-            hook_type=analysis_data.get("hook_type", ""),
-            storytelling=analysis_data.get("storytelling", ""),
-            cta_type=analysis_data.get("cta_type", ""),
-            speaking_speed=analysis_data.get("speaking_speed", ""),
-            scene_setting=analysis_data.get("scene_setting", ""),
-            camera_shot=analysis_data.get("camera_shot", ""),
-            onscreen_talent=analysis_data.get("onscreen_talent", ""),
-            visual_elements=analysis_data.get("visual_elements", ""),
-            text_overlays=analysis_data.get("text_overlays", ""),
-            visual_tone=analysis_data.get("visual_tone", ""),
-            products_shown=analysis_data.get("products_shown", ""),
-            content_style=analysis_data.get("content_style", ""),
-            key_topics=analysis_data.get("key_topics", []),
-            replicability=analysis_data.get("replicability", ""),
-            summary=analysis_data.get("summary", ""),
+            **analysis_data,
         )

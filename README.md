@@ -146,7 +146,31 @@ python3 bridge/videoagent_bridge.py analyze-video "https://www.douyin.com/video/
 
 需配置 `LLM_API_KEY`。输出含钩子类型、内容风格、CTA 类型等结构化分析。
 
-### 4. 关键词搜索（素材调研）
+### 4. 创作者粉丝数查询（对标调研）
+
+搜索创作者昵称，从 MediaCrawler 缓存获取粉丝数、简介等信息。用于验证对标账号的粉丝量和账号方向：
+
+```bash
+python3 bridge/videoagent_bridge.py lookup-creator dy "年糕妈妈"
+```
+
+输出：
+```json
+{
+  "status": "ok",
+  "profile": {
+    "follower_count": "9422148",
+    "nickname": "年糕妈妈",
+    "desc": "浙大医学硕士 | 三兄弟的妈妈..."
+  }
+}
+```
+
+匹配策略：先精确匹配昵称，失败则取发该关键词视频数最多的作者。如果搜索结果中有多个疑似账号（视频数接近），返回 `ambiguous`。
+
+**注意**：首次查询未缓存过的创作者会触发 MediaCrawler 抓取（较慢），后续查询直接从缓存读取。区别于 `search`（搜内容找热门视频）和 `fetch-creator`（抓某个创作者的完整作品列表）。
+
+### 5. 关键词搜索（素材调研）
 
 在抖音搜索某个话题下的热门视频，用于找对标、研究选题：
 
@@ -156,7 +180,7 @@ python3 bridge/videoagent_bridge.py search dy "坐月子" --min-likes 5000
 python3 bridge/videoagent_bridge.py search dy "产后恢复" --min-likes 1000
 ```
 
-**注意**：这是"搜内容"（找话题下的热门视频），区别于 `fetch-creator` 的"搜账号"（抓取某个创作者的全部视频）。`--min-likes` 过滤低赞内容。搜索结果仅包含标题、互动数等字段，不会下载视频或做内容分析。
+**注意**：这是"搜内容"（找话题下的热门视频），区别于 `fetch-creator` 的"搜账号"（抓取某个创作者的全部视频）和 `lookup-creator` 的"查粉丝数"。`--min-likes` 过滤低赞内容。搜索结果仅包含标题、互动数等字段，不会下载视频或做内容分析。
 
 ---
 

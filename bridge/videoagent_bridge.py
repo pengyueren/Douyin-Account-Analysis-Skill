@@ -37,17 +37,16 @@ try:
 except ImportError:
     pass
 
-# 确保 bridge 目录在路径中
+# 确保 bridge 目录和项目根目录在路径中
 _bridge_dir = Path(__file__).parent
+_project_root = _bridge_dir.parent
 if str(_bridge_dir) not in sys.path:
     sys.path.insert(0, str(_bridge_dir))
-
-from mediacrawler_runner import MediaCrawlerRunner
-
-# 持久化存储
-_project_root = _bridge_dir.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+from mediacrawler_runner import MediaCrawlerRunner
+from bridge.video_analyzer import VideoAnalyzer, VideoDownloader, AudioVisualProcessor, SpeechTranscriber
 from store.storage import AccountStorage
 
 # ── URL 解析工具 ─────────────────────────────
@@ -83,8 +82,8 @@ def _resolve_douyin_shortlink(url: str) -> str:
             m = re.search(r"/share/user/([^/?]+)", redirect_url)
             if m:
                 return m.group(1)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  [bridge] 解析短链接失败: {e}", file=sys.stderr)
     raise ValueError(f"无法解析抖音短链接: {url}")
 
 
@@ -100,6 +99,12 @@ def _to_date(val) -> str:
     s = str(val).strip()
     if re.match(r"^\d{4}-\d{2}-\d{2}", s):
         return s
+    # 字符串形式的毫秒时间戳（如 "1704067200000"）
+    if s.isdigit() and len(s) > 12:
+        try:
+            return datetime.fromtimestamp(int(s) / 1000).strftime("%Y-%m-%d")
+        except (OSError, ValueError, OverflowError):
+            return ""
     return ""
 
 
@@ -150,17 +155,25 @@ def _assess_data_sufficiency(videos: list[dict]) -> dict:
         v["create_time"] for v in videos
         if v.get("create_time") and len(str(v.get("create_time", ""))) >= 10
     )
-    if len(dates) < 2:
+    # 过滤掉无法解析的日期格式
+    valid_dates = []
+    for d in dates:
+        try:
+            datetime.strptime(d[:10], "%Y-%m-%d")
+            valid_dates.append(d[:10])
+        except (ValueError, TypeError):
+            continue
+    if len(valid_dates) < 2:
         return {"flag": "insufficient_date_info", "video_count": len(videos)}
 
-    earliest = dates[0]
-    latest = dates[-1]
+    earliest = valid_dates[0]
+    latest = valid_dates[-1]
     span = (datetime.strptime(latest, "%Y-%m-%d") - datetime.strptime(earliest, "%Y-%m-%d")).days
     span = max(span, 1)
 
     months_in_range = (span // 30) + 1
-    months_with_videos = len(set(d[:7] for d in dates))
-    gap_count = months_in_range - months_with_videos
+    months_with_videos = len(set(d[:7] for d in valid_dates))
+    gap_count = max(0, months_in_range - months_with_videos)
     avg_per_month = round(len(videos) / months_in_range, 1)
 
     # 判定旗标
@@ -209,6 +222,10 @@ def _build_result(
 
 def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
     """在指定平台搜索关键词，过滤 >=min_likes 的结果"""
+    if platform not in ("dy", "douyin"):
+        print(f"[bridge] 暂不支持的平台: {platform}", file=sys.stderr)
+        return []
+
     try:
         runner = MediaCrawlerRunner()
         raw = runner.search_keyword(platform, keyword, limit=50)
@@ -223,11 +240,9 @@ def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
             continue
 
         item_id = item.get("aweme_id", "") or item.get("note_id", "") or ""
-        is_video = True
-        if platform in ("dy", "douyin"):
-            aweme_type = item.get("aweme_type", 0)
-            is_video = aweme_type != 2
-            item_url = f"https://www.douyin.com/video/{item_id}"
+        aweme_type = item.get("aweme_type", 0)
+        is_video = aweme_type != 2
+        item_url = f"https://www.douyin.com/video/{item_id}"
 
         results.append({
             "id": item_id,
@@ -236,6 +251,7 @@ def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
             "url": item_url,
             "author_name": item.get("nickname", ""),
             "author_id": item.get("user_id", ""),
+            "sec_uid": item.get("sec_uid", ""),
             "likes": likes,
             "comments": int(item.get("comment_count", 0) or 0),
             "favorites": int(item.get("collected_count", 0) or 0),
@@ -245,6 +261,129 @@ def cmd_search(platform: str, keyword: str, min_likes: int = 500) -> list[dict]:
             "create_time": str(item.get("create_time", "")),
         })
     return results
+
+
+def _resolve_target_author(search_raw: list[dict], keyword: str) -> dict | None:
+    """从搜索结果中识别目标作者
+
+    搜索结果按作者（sec_uid）归组，按优先级选择：
+    1. 昵称精确匹配 keyword → 锁定
+    2. 发该关键词视频数最多的作者
+    3. 前两名视频数差距 ≤1 时返回 None（多候选无法判定）
+
+    Returns:
+        {"sec_uid": str, "nickname": str, "user_id": str, "video_count": int} | None
+    """
+    # 按 sec_uid 归组
+    groups: dict[str, dict] = {}
+    for item in search_raw:
+        sec = str(item.get("sec_uid", "") or "")
+        if not sec:
+            continue
+        if sec not in groups:
+            groups[sec] = {
+                "sec_uid": sec,
+                "nickname": str(item.get("nickname", "") or ""),
+                "user_id": str(item.get("user_id", "") or ""),
+                "video_count": 0,
+            }
+        groups[sec]["video_count"] += 1
+
+    if not groups:
+        return None
+
+    # 1. 精确匹配
+    for g in groups.values():
+        if g["nickname"] == keyword:
+            return g
+
+    # 2. 视频数排序，取最多的
+    sorted_groups = sorted(groups.values(), key=lambda g: g["video_count"], reverse=True)
+    if len(sorted_groups) >= 2 and sorted_groups[0]["video_count"] - sorted_groups[1]["video_count"] <= 1:
+        # 前两名太接近，无法判定
+        return None
+    return sorted_groups[0]
+
+
+def cmd_lookup_creator(platform: str, keyword: str) -> dict:
+    """搜索创作者并获取粉丝数等信息
+
+    通过搜索关键词找到创作者，再从 MediaCrawler 缓存或实时抓取获取粉丝数、
+    简介等信息。不依赖硬编码数据。
+
+    匹配策略：搜索结果按作者归组，优先精确匹配昵称，
+    其次取发该关键词视频数最多的作者。
+
+    Args:
+        platform: "dy"
+        keyword: 搜索关键词（账号昵称）
+
+    Returns:
+        {"status": "ok"/"not_found"/"ambiguous"/"partial"/"error",
+         "profile": {"follower_count": str, "nickname": str, "desc": str},
+         "search_results": int,
+         "matched_author": {"nickname": str, "video_count": int}}  # 匹配到的作者信息
+    """
+    try:
+        # 1. 搜索找到创作者
+        runner = MediaCrawlerRunner()
+        search_raw = runner.search_keyword(platform, keyword, limit=20)
+        if not search_raw:
+            return {"status": "not_found", "message": f"未搜索到「{keyword}」的相关视频", "profile": None}
+
+        # 2. 从搜索结果中识别目标作者
+        target = _resolve_target_author(search_raw, keyword)
+        if not target:
+            return {
+                "status": "ambiguous",
+                "message": f"「{keyword}」搜索到多个候选作者，无法确定目标",
+                "profile": None,
+                "search_results": len(search_raw),
+            }
+
+        sec_uid = target["sec_uid"]
+        user_id = target["user_id"]
+
+        # 3. 尝试从缓存读取 profile（creator_creators_*.jsonl）
+        creator_id = sec_uid or user_id
+        profile = runner._read_creator_profile(platform, creator_id)
+
+        if profile:
+            return {
+                "status": "ok",
+                "profile": profile,
+                "search_results": len(search_raw),
+                "matched_author": {"nickname": target["nickname"], "video_count": target["video_count"]},
+            }
+
+        # 4. 缓存未命中，运行 creator 抓取获取 profile
+        print(f"  [bridge] 「{keyword}」无缓存 profile，触发 MediaCrawler 抓取...", file=sys.stderr)
+        items = runner.search_creator(platform, creator_id)
+        if items:
+            profile = items[0].get("_profile", None)
+            if profile:
+                return {
+                    "status": "ok",
+                    "profile": profile,
+                    "search_results": len(search_raw),
+                    "matched_author": {"nickname": target["nickname"], "video_count": target["video_count"]},
+                }
+
+        # 5. 有搜索数据但无法获取粉丝数
+        return {
+            "status": "partial",
+            "message": f"「{keyword}」已确认存在（{target['video_count']}条相关视频），但无法获取粉丝数（缓存中无完整 profile）",
+            "profile": {
+                "follower_count": "unknown",
+                "nickname": target["nickname"],
+                "desc": "",
+            },
+            "matched_author": {"nickname": target["nickname"], "video_count": target["video_count"]},
+            "search_results": len(search_raw),
+        }
+
+    except Exception as e:
+        return {"status": "error", "error": str(e), "profile": None}
 
 
 def cmd_fetch_creator(url: str, platform: str) -> dict:
@@ -309,8 +448,6 @@ def cmd_analyze_video(url: str, platform: str, account_name: str = "") -> dict:
     不配置时仅做音频转写，不做画面分析。
     """
     try:
-        from bridge.video_analyzer import VideoAnalyzer
-
         # 从环境变量读取 LLM 配置（如果设置了 LLM_API_KEY）
         llm_key = os.getenv("LLM_API_KEY", "")
         analyzer_cfg = {}
@@ -322,14 +459,15 @@ def cmd_analyze_video(url: str, platform: str, account_name: str = "") -> dict:
             }
 
         analyzer = VideoAnalyzer(analyzer_cfg) if analyzer_cfg else VideoAnalyzer()
-        result = analyzer.analyze(url=url, note_id="bridge_" + url.split("/")[-1][:20], platform=platform)
+        note_id = url.split("/")[-1].split("?")[0][:20]
+        result = analyzer.analyze(url=url, note_id="bridge_" + note_id, platform=platform)
         data = result.model_dump()
 
         # 持久化存储
         if account_name:
             try:
                 storage = AccountStorage(account_name)
-                video_id = url.split("/")[-1][:30]
+                video_id = url.split("/")[-1].split("?")[0][:30]
                 if data.get("transcript"):
                     storage.save_transcript(video_id, data["transcript"])
                 storage.save_video_analysis(video_id, data)
@@ -350,14 +488,11 @@ def cmd_extract_audio(url: str, platform: str, account_name: str = "") -> dict:
     用法:
         python3 bridge/videoagent_bridge.py extract-audio <url> <platform> [account_name]
     """
-    from video_analyzer import VideoDownloader, AudioVisualProcessor, SpeechTranscriber
-    from pathlib import Path
-
     def _persist(result: dict) -> dict:
         if account_name and result.get("status") == "ok" and result.get("transcript"):
             try:
                 storage = AccountStorage(account_name)
-                video_id = url.split("/")[-1][:30]
+                video_id = url.split("/")[-1].split("?")[0][:30]
                 storage.save_transcript(video_id, result["transcript"])
                 storage.save_video_analysis(video_id, result)
                 result["_stored_at"] = str(storage.root / "analysis")
@@ -365,10 +500,10 @@ def cmd_extract_audio(url: str, platform: str, account_name: str = "") -> dict:
                 result["_storage_error"] = str(e)
         return result
 
-    work_dir = "output/audio_extract"
+    work_dir = str(_project_root / "output" / "audio_extract")
     Path(work_dir).mkdir(parents=True, exist_ok=True)
     work_dir_path = Path(work_dir)
-    note_id = "audio_" + url.split("/")[-1][:20]
+    note_id = "audio_" + url.split("/")[-1].split("?")[0][:20]
 
     plat_map = {"dy": "douyin"}
     plat = plat_map.get(platform, platform)
@@ -379,10 +514,10 @@ def cmd_extract_audio(url: str, platform: str, account_name: str = "") -> dict:
         subprocess.run([
             "yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "mp3",
             "-o", str(audio_file), "--max-filesize", "100M",
-            "--cookies-from-browser", "chrome",
             "--no-playlist", "--no-warnings", "--force-ipv4", url,
         ], capture_output=True, text=True, timeout=120)
-    except Exception:
+    except Exception as e:
+        print(f"  [bridge] yt-dlp 直接下载音频失败（降级到完整下载）: {e}", file=sys.stderr)
         audio_file = None
 
     if audio_file and audio_file.exists() and audio_file.stat().st_size > 1000:
@@ -430,13 +565,8 @@ def cmd_extract_audio(url: str, platform: str, account_name: str = "") -> dict:
 
 
 def cmd_analyze_article(url: str, platform: str) -> dict:
-    """分析图文内容（目前返回该平台的搜索结果）"""
-    try:
-        runner = MediaCrawlerRunner()
-        raw = runner.search_keyword(platform, "", limit=5)
-        return {"status": "ok", "data": raw[:3] if raw else []}
-    except Exception as e:
-        return {"error": str(e)}
+    """分析图文内容（暂未实现）"""
+    return {"status": "error", "error": "analyze-article 暂未实现，请使用 analyze-video 分析视频或 fetch-creator 获取创作者数据"}
 
 
 # ═══════════════════════════════════════════════════════
@@ -449,6 +579,7 @@ def main():
     _cmd_defs = {
         "search": ["<platform>", "<keyword>", "[--min-likes N]"],
         "fetch-creator": ["<url>", "<platform>"],
+        "lookup-creator": ["<platform>", "<keyword>"],
         "analyze-video": ["<url>", "<platform>", "[account_name]"],
         "analyze-article": ["<url>", "<platform>"],
         "extract-audio": ["<url>", "<platform>", "[account_name]"],
@@ -471,6 +602,9 @@ def main():
 
     if command == "search":
         platform = sys.argv[2]
+        if platform not in ("dy", "douyin"):
+            print(json.dumps({"error": f"暂不支持的平台: {platform}"}, ensure_ascii=False))
+            sys.exit(1)
         keyword = sys.argv[3]
         min_likes = 500
         if "--min-likes" in sys.argv:
@@ -484,6 +618,12 @@ def main():
         url = sys.argv[2]
         platform = sys.argv[3]
         result = cmd_fetch_creator(url, platform)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+
+    elif command == "lookup-creator":
+        platform = sys.argv[2]
+        keyword = sys.argv[3]
+        result = cmd_lookup_creator(platform, keyword)
         print(json.dumps(result, ensure_ascii=False, indent=2))
 
     elif command == "analyze-video":

@@ -86,14 +86,15 @@ class MediaCrawlerRunner:
                              key=lambda f: f.stat().st_mtime, reverse=True)
         use_cache = False
         if cache_files and cache_files[0].stat().st_size > 100:
-            first_line = cache_files[0].open(encoding="utf-8").readline().strip()
+            with cache_files[0].open(encoding="utf-8") as f:
+                first_line = f.readline().strip()
             if first_line:
                 try:
                     cached = json.loads(first_line)
                     cached_sec = str(cached.get("sec_uid", "") or "")
                     cached_uid = str(cached.get("user_id", "") or "")
-                    if (cached_sec and (cached_sec == creator_id or creator_id in cached_sec or cached_sec in creator_id)) or \
-                       (cached_uid and (cached_uid == creator_id or creator_id in cached_uid or cached_uid in creator_id)):
+                    if (cached_sec and cached_sec == creator_id) or \
+                       (cached_uid and cached_uid == creator_id):
                         use_cache = True
                 except json.JSONDecodeError:
                     pass
@@ -137,20 +138,21 @@ class MediaCrawlerRunner:
     def _read_jsonl_with_filter(self, file_path: Path, creator_id: str) -> list[dict]:
         """从 JSONL 文件读取并按 creator_id 过滤"""
         items: list[dict] = []
-        for line in file_path.open(encoding="utf-8").readlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-                # 优先用 sec_uid 匹配（因为我们通常用 sec_uid 搜索）
-                item_sec = str(item.get("sec_uid", "") or "")
-                item_uid = str(item.get("user_id", "") or "")
-                if (item_sec and (item_sec == creator_id or creator_id in item_sec or item_sec in creator_id)) or \
-                   (item_uid and (item_uid == creator_id or creator_id in item_uid or item_uid in creator_id)):
-                    items.append(item)
-            except json.JSONDecodeError:
-                continue
+        with file_path.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                    # 优先用 sec_uid 匹配（因为我们通常用 sec_uid 搜索）
+                    item_sec = str(item.get("sec_uid", "") or "")
+                    item_uid = str(item.get("user_id", "") or "")
+                    if (item_sec and item_sec == creator_id) or \
+                       (item_uid and item_uid == creator_id):
+                        items.append(item)
+                except json.JSONDecodeError:
+                    continue
         return items
 
     def _enrich_items(self, items: list[dict], creator_id: str, platform: str) -> list[dict]:
@@ -173,23 +175,29 @@ class MediaCrawlerRunner:
         files = sorted(data_dir.glob("creator_creators_*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
         if not files:
             return None
-        for line in files[0].open(encoding="utf-8").readlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                p = json.loads(line)
-                p_sec = str(p.get("sec_uid", "") or "")
-                p_uid = str(p.get("user_id", "") or "")
-                if (p_sec and (p_sec == creator_id or creator_id in p_sec or p_sec in creator_id)) or \
-                   (p_uid and (p_uid == creator_id or creator_id in p_uid or p_uid in creator_id)):
-                    return {
-                        "follower_count": str(p.get("fans", 0) or 0),
-                        "desc": p.get("desc", "") or "",
-                        "nickname": p.get("nickname", "") or "",
-                    }
-            except json.JSONDecodeError:
-                continue
+        with files[0].open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    p = json.loads(line)
+                    p_sec = str(p.get("sec_uid", "") or "")
+                    p_uid = str(p.get("user_id", "") or "")
+                    if (p_sec and p_sec == creator_id) or \
+                       (p_uid and p_uid == creator_id):
+                        nickname = str(p.get("nickname", "") or "")
+                        follower_count = str(p.get("fans", 0) or 0)
+                        # 跳过不完整数据（抓取被中断时可能留下空记录）
+                        if not nickname or follower_count in ("0", ""):
+                            continue
+                        return {
+                            "follower_count": follower_count,
+                            "desc": p.get("desc", "") or "",
+                            "nickname": nickname,
+                        }
+                except json.JSONDecodeError:
+                    continue
         return None
 
     def search_keyword(self, platform: str, keyword: str, limit: int = 20) -> list[dict]:
@@ -215,10 +223,13 @@ class MediaCrawlerRunner:
             "--max_comments_count_singlenotes", "0",
             "--save_data_option", "jsonl",
         ]
-        result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=300)
-        if result.returncode != 0:
-            print(f"  [MediaCrawlerRunner] search CLI 返回错误码 {result.returncode}: {result.stderr.strip()[:200]}", file=sys.stderr)
-            return []
+        try:
+            result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                print(f"  [MediaCrawlerRunner] search CLI 返回错误码 {result.returncode}: {result.stderr.strip()[:200]}", file=sys.stderr)
+                # CLI 失败时读已有缓存
+        except (subprocess.TimeoutExpired, Exception) as e:
+            print(f"  [MediaCrawlerRunner] search CLI 异常（尝试读缓存）: {e}", file=sys.stderr)
 
         data_dir = Path(self.repo_path) / "data" / plat_dir_name / "jsonl"
         files = sorted(data_dir.glob("search_contents_*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
@@ -226,13 +237,18 @@ class MediaCrawlerRunner:
             return []
 
         items: list[dict] = []
-        for line in files[0].open(encoding="utf-8").readlines()[-100:]:
-            line = line.strip()
-            if line:
-                try:
-                    items.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        with files[0].open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        items.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
+        # 按关键词过滤（search_contents 是每日合并文件，可能含其他关键词的结果）
+        if keyword:
+            items = [it for it in items if str(it.get("source_keyword", "") or "") == keyword]
 
         for item in items:
             for field in ("liked_count", "comment_count", "collected_count", "share_count", "video_play_count"):

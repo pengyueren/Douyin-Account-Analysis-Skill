@@ -9,11 +9,8 @@ openai>=1.0
 # .env 加载
 python-dotenv>=1.0
 
-# 语音转写（CUDA 检测）
-torch>=2.0
-
-# 图片处理（视频分析帧处理用）
-Pillow>=10.0
+# torch 为 faster-whisper 的可选加速依赖，安装时按需添加
+# Pillow 未直接使用，不加入核心依赖
 
 # 外部依赖（运行前需单独安装）：
 # - ffmpeg / ffprobe（系统级：brew install ffmpeg / apt install ffmpeg）
