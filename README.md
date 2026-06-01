@@ -1,12 +1,15 @@
-# 抖音账号诊断 CLI 工具
+# 抖音账号诊断工具
+
+> 快速分析你的账号或你指定账号的情况，给出**改进建议 + 对标账号 + 粉丝破圈方法**。
+> 本技能蒸馏了大量账号分析、视频诊断的研究报告和大V思路，专注于如何把抖音号流量和粉丝数做起来。
+
+一键采集账号全量数据 → 结构化诊断 → 输出图文报告。CLI 输出 JSON 到 stdout，任何 AI agent 都可调用。
 
 ```shell
 python3 bridge/videoagent_bridge.py fetch-creator <url> dy
 python3 bridge/videoagent_bridge.py extract-audio <url> dy
 python3 bridge/videoagent_bridge.py analyze-video <url> dy
 ```
-
-输出 JSON 到 stdout，任何 agent 都可以调用。
 
 ---
 
