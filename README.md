@@ -1,15 +1,27 @@
 # 抖音账号诊断工具
 
-> 快速分析你的账号或你指定账号的情况，给出**改进建议 + 对标账号 + 粉丝破圈方法**。
-> 本技能蒸馏了大量账号分析、视频诊断的研究报告和大V思路，专注于如何把抖音号流量和粉丝数做起来。
+> 你的抖音运营已经来不及凭感觉了。每条视频都在帮你积累数据——但大多数人的数据躺在后台，一条分析都没做过。
+>
+> 本项目把抖音账号诊断从「凭经验猜」升级为「数据驱动」：一键采集 → 结构化分析 → 输出可执行的改进方案。CLI 输出纯 JSON，任何 AI agent 都能调用。
 
-一键采集账号全量数据 → 结构化诊断 → 输出图文报告。CLI 输出 JSON 到 stdout，任何 AI agent 都可调用。
+账号分析经验来自大量研究报告和大 V 思路的蒸馏（钩子理论、内容结构拆解、互动率基准），不是泛泛的「多拍高质量视频」。
 
 ```shell
 python3 bridge/videoagent_bridge.py fetch-creator <url> dy
 python3 bridge/videoagent_bridge.py extract-audio <url> dy
 python3 bridge/videoagent_bridge.py analyze-video <url> dy
 ```
+
+---
+
+## 核心能力
+
+- **一键采集**全量视频数据（点赞、评论、收藏、分享、发布时间）
+- **音频提取 + 语音转写**（faster-whisper），拿到口播文案
+- **视频深度分析**（多模态 + 文本），识别钩子类型、内容结构、CTA
+- **创作者对标调研**（粉丝数、简介、内容方向）
+- **关键词趋势搜索**（话题下的热门视频），用于选题素材调研
+- **结构化诊断报告**，输出到 CLI stdout，可被任何 agent 消费
 
 ---
 
@@ -59,13 +71,9 @@ cp .env.example .env
 
 ## 配置
 
-复制 `.env.example` 为 `.env`：
-
 ```bash
 cp .env.example .env
 ```
-
-### 配置项说明
 
 | 环境变量 | 必需 | 说明 |
 |---------|------|------|
@@ -73,8 +81,6 @@ cp .env.example .env
 | `LLM_API_KEY` | 否 | 多模态视频分析的 API key（不配则不做画面分析） |
 | `LLM_BASE_URL` | 否 | API 地址，默认 `https://ark.cn-beijing.volces.com/api/v3` |
 | `LLM_MODEL` | 否 | 模型名称（Seed 2.0 的接入点名称） |
-
-环境变量会在 `bridge/videoagent_bridge.py` 启动时自动加载。
 
 ---
 
@@ -88,7 +94,7 @@ cp .env.example .env
 python3 bridge/videoagent_bridge.py fetch-creator "https://www.douyin.com/user/{sec_uid}" dy
 ```
 
-输出示例：
+输出：
 ```json
 {
   "status": "ok",
@@ -187,13 +193,13 @@ python3 bridge/videoagent_bridge.py search dy "产后恢复" --min-likes 1000
 
 ---
 
-## Agent 集成指南
+## Agent 集成
 
-本项目的 CLI 以 **JSON to stdout** 的方式输出，任何 agent 只要能执行 Bash 命令就可以使用。
+本项目 CLI 统一输出 JSON 到 stdout，任何支持 Bash 的 agent 都可直接使用。
 
-### Claude Code (Skill)
+### Claude Code（原生集成）
 
-本项目已内置 `SKILL.md`，在 Claude Code 中可直接用自然语言交互：
+本项目内置 `SKILL.md`，Claude Code 中可直接用自然语言操作：
 
 ```
 分析一下抖音账号 https://www.douyin.com/user/xxx
@@ -201,49 +207,69 @@ python3 bridge/videoagent_bridge.py search dy "产后恢复" --min-likes 1000
 
 ### Codex / Windsurf / Trae
 
-这些 agent 不支持 SKILL.md，但可以通过 CLI 命令集成。在项目规则文件（如 `.cursorules`、`windsurf.json` 等）中添加以下说明：
+这些 agent 不支持 SKILL.md，但可通过 CLI 命令集成。在项目规则文件中添加：
 
 ```
-# 抖音账号诊断工具用法
-# 数据采集:
-#   python3 bridge/videoagent_bridge.py fetch-creator <url> dy
-# 音频转写:
-#   python3 bridge/videoagent_bridge.py extract-audio <url> dy "昵称"
-# 视频分析:
-#   python3 bridge/videoagent_bridge.py analyze-video <url> dy "昵称"
+# 抖音账号诊断工具
+# 采集: python3 bridge/videoagent_bridge.py fetch-creator <url> dy
+# 转写: python3 bridge/videoagent_bridge.py extract-audio <url> dy "昵称"
+# 分析: python3 bridge/videoagent_bridge.py analyze-video <url> dy "昵称"
+# 对标: python3 bridge/videoagent_bridge.py lookup-creator dy "昵称"
+# 搜索: python3 bridge/videoagent_bridge.py search dy "关键词" --min-likes 2000
 #
-# 所有命令输出 JSON 到 stdout。
-# 诊断框架见 references/ 目录和 SKILL.md。
+# 所有命令输出 JSON 到 stdout，诊断框架见 references/ 目录和 SKILL.md。
 ```
 
 或直接在对话中告诉 agent：
 
 > 这个项目在 `bridge/videoagent_bridge.py` 提供 CLI 命令，输出 JSON。
-> 用 `fetch-creator` 命令抓取数据，然后分析回传的 JSON。
+> 用 `fetch-creator` 抓取数据，然后分析回传的 JSON。
 
 ---
 
-## 项目结构速览
-
-```
-diagnosis/
-├── bridge/                    # CLI 工具 (所有 agent 通用)
-├── references/                # 诊断知识库 (赛道基准、分析框架、改进手册)
-├── store/                     # 数据持久化
-│   ├── storage.py             # 存储工具
-│   └── accounts/{昵称}/       # 每个账号的数据
-├── .env.example               # 环境变量模板
-├── SKILL.md                   # Claude Code 集成 (其他 agent 不需要)
-└── ARCHITECTURE.md            # 架构文档
-```
-
 ## 诊断流程
 
-完整诊断需要以下步骤（可由 agent 或手动执行）：
+完整的诊断流程：
+
+```mermaid
+flowchart LR
+  A[采集数据] --> B[音频转写]
+  B --> C[交叉分析]
+  C --> D[输出报告]
+  A --> E[多模态分析]
+  E --> C
+```
 
 1. **采集数据** → `fetch-creator`（得到视频列表 + 互动数据）
 2. **分析内容** → 对重要视频做 `extract-audio`（得到口播文案）
-3. **交叉分析** → 对比爆款 vs 低互动视频的内容结构差异
-4. **输出报告** → 生成 HTML 诊断报告，存到 `store/accounts/{昵称}/reports/`
+3. **多模态分析** → `analyze-video`（画面、场景、人物出镜分析）
+4. **交叉分析** → 对比爆款 vs 低互动视频的内容结构差异
+5. **输出报告** → 生成 HTML 诊断报告
 
 详细诊断框架见 `SKILL.md` 和 `references/` 目录。
+
+---
+
+## 项目结构
+
+```
+diagnosis/
+├── bridge/                    # CLI 入口（所有 agent 通用）
+│   └── videoagent_bridge.py
+├── references/                # 诊断知识库
+│   ├── 赛道基准/
+│   ├── 分析框架/
+│   └── 改进手册/
+├── store/                     # 数据持久化
+│   ├── storage.py
+│   └── accounts/{昵称}/
+├── .env.example
+├── SKILL.md                   # Claude Code 集成
+└── ARCHITECTURE.md            # 架构文档
+```
+
+---
+
+## License
+
+MIT
